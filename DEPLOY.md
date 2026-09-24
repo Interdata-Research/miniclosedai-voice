@@ -5,7 +5,7 @@ Two services, one URL for MiniClosedAI to register:
 | | Repo | Port | Serves |
 |---|---|---|---|
 | **Front** | `miniclosedai-voice` (this repo) | 8090 | English TTS (Chatterbox Turbo), Whisper ASR, WebRTC call mode, and the merged voice catalog |
-| **Spanish** | [`latinavoicepod`](https://github.com/edantonio505/latinavoicepod) | 8088 | Spanish voices (VoxCPM2 cloning), Whisper `large-v3` Spanish ASR |
+| **Spanish** | [`latinavoicepod`](https://github.com/Interdata-Research/latinavoicepod) | 8088 | Spanish voices (VoxCPM2 cloning), Whisper `large-v3` Spanish ASR |
 
 The front service proxies any voice it does not have locally to the Spanish one
 (`VOICE_UPSTREAM_URL`). **Register only the front service in MiniClosedAI.**
@@ -24,7 +24,7 @@ The front service proxies any voice it does not have locally to the Spanish one
 ## 1. Spanish service (start with this one — the front service probes it)
 
 ```bash
-git clone https://github.com/edantonio505/latinavoicepod.git latina_voice_tts
+git clone https://github.com/Interdata-Research/latinavoicepod.git latina_voice_tts
 cd latina_voice_tts
 cat > .env <<'EOF'
 HF_HOME=/path/to/persistent/hf-cache     # or the weights re-download on every boot
@@ -46,7 +46,7 @@ through the GUI at `http://<host>:8088/studio/`.
 ## 2. Front service (this repo)
 
 ```bash
-git clone https://github.com/edantonio505/miniclosedai-voice.git
+git clone https://github.com/Interdata-Research/miniclosedai-voice.git
 cd miniclosedai-voice
 ./setup.sh                               # venv at ./env, torch wheel matched to the driver
 VOICE_UPSTREAM_URL=http://127.0.0.1:8088 \

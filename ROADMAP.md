@@ -1,7 +1,7 @@
 # Notes for the next version
 
 Written 2026-09-24, when `upstream.py` (Spanish via a paired
-[latina_voice_tts](https://github.com/edantonio505/latinavoicepod)) landed. This
+[latina_voice_tts](https://github.com/Interdata-Research/latinavoicepod)) landed. This
 is the context a future session needs before changing that integration: what is
 deliberately missing, what will break if touched carelessly, and what is worth
 building next.

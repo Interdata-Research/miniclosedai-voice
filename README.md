@@ -1,6 +1,6 @@
 # MiniClosedAI Voice Service
 
-Self-hosted, GPU-accelerated voice microservice for [MiniClosedAI](https://github.com/edantonio505/miniclosedai).
+Self-hosted, GPU-accelerated voice microservice for [MiniClosedAI](https://github.com/Interdata-Research/miniclosedai).
 Streams duplex audio between the browser and the bot via WebRTC.
 
 ```
@@ -154,7 +154,7 @@ Looks at the pidfile first, falls back to `pgrep` for any orphaned uvicorn.
 ## Spanish voices — pairing with latina_voice_tts
 
 Chatterbox Turbo, the TTS engine here, is English. Spanish comes from a
-[**latina_voice_tts**](https://github.com/edantonio505/latinavoicepod) instance
+[**latina_voice_tts**](https://github.com/Interdata-Research/latinavoicepod) instance
 (VoxCPM2 voice cloning, native Spanish, plus Whisper `large-v3` for Spanish
 speech-to-text). Point this service at one and it serves both languages behind
 a single URL:
@@ -302,7 +302,7 @@ curl -sk https://<host>:8090/speak -H 'Content-Type: application/json' \
 
 | Layer | Library | Model | Notes |
 |---|---|---|---|
-| Spanish TTS/ASR (optional) | `requests` → `upstream.py` | a [latina_voice_tts](https://github.com/edantonio505/latinavoicepod) instance (VoxCPM2 + Whisper large-v3) | set `VOICE_UPSTREAM_URL`; its voices join `/voices` and work in call mode |
+| Spanish TTS/ASR (optional) | `requests` → `upstream.py` | a [latina_voice_tts](https://github.com/Interdata-Research/latinavoicepod) instance (VoxCPM2 + Whisper large-v3) | set `VOICE_UPSTREAM_URL`; its voices join `/voices` and work in call mode |
 | ASR | `transformers` + `torch` | `openai/whisper-medium.en` (default) | swap via `VOICE_ASR_MODEL`; English-only `.en` variants are ~3× faster than multilingual for the same size |
 | TTS | `chatterbox-tts==0.1.6` (`tts_turbo` variant, `--no-deps`) | `ChatterboxTurboTTS.from_pretrained()` | token-streaming, fp16 transformer, **4** CFM diffusion steps (250× fewer than the default 1000), pattern lifted from `BCP_stuff/tts_server.py` |
 | VAD + turn-taking | `fastrtc[vad]` | Silero VAD | `min_silence_duration_ms=300` (was 2000 default), `can_interrupt=False` to prevent speaker→mic echo from cancelling the bot mid-reply |
@@ -404,7 +404,7 @@ WAV-only and doesn't need ffmpeg or any extra codecs in the image.
 
 The voice is **immediately** available — no restart needed. `GET /voices`
 rescans the directory on every request, so the next time
-[MiniClosedAI](https://github.com/edantonio505/miniclosedai)'s TTS picker
+[MiniClosedAI](https://github.com/Interdata-Research/miniclosedai)'s TTS picker
 calls `/api/voices` (which proxies through to this service) your clone
 shows up in the dropdown.
 
