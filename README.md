@@ -151,6 +151,68 @@ Looks at the pidfile first, falls back to `pgrep` for any orphaned uvicorn.
 
 ---
 
+## Spanish voices — pairing with latina_voice_tts
+
+Chatterbox Turbo, the TTS engine here, is English. Spanish comes from a
+[**latina_voice_tts**](https://github.com/edantonio505/latinavoicepod) instance
+(VoxCPM2 voice cloning, native Spanish, plus Whisper `large-v3` for Spanish
+speech-to-text). Point this service at one and it serves both languages behind
+a single URL:
+
+```bash
+VOICE_UPSTREAM_URL=http://127.0.0.1:8088 ./start.sh -d
+```
+
+That is the whole integration. MiniClosedAI still registers **one** voice
+backend, and its picker shows the English voices from here plus the Spanish
+ones from there:
+
+```
+MiniClosedAI ──► miniclosedai-voice :8090
+                   ├── en/default …      Chatterbox Turbo   (local)
+                   ├── /transcribe       Whisper            (local)
+                   ├── /call/* WebRTC    FastRTC + VAD      (local)
+                   └── es/carla,romina … ──proxy──► latina_voice_tts :8088
+```
+
+**How it routes.** Everything that synthesizes — `/speak`, `/speak/stream` and
+the WebRTC call handler — goes through `tts.synthesize_stream()`, so
+`upstream.py` hooks that one seam and call mode gets Spanish for free. A voice
+is forwarded only when it is *not* in this service's `voices/` directory and
+*is* in the upstream's `/voices`, so a shared id (both ship a `default`)
+resolves locally.
+
+**Spanish speech-to-text** is forwarded too, but only when it helps: if
+`VOICE_ASR_MODEL` is an English-only checkpoint (`medium.en` & co.) and a
+non-English `language` is requested, the clip goes to the upstream's
+`/transcribe` (Whisper `large-v3`, forced Spanish). Set a multilingual local
+model (`VOICE_ASR_MODEL=large-v3`) and nothing is routed — one less hop, at the
+cost of a second large model in VRAM.
+
+**Failure behaviour.** The upstream is optional and never fatal: unset the
+variable and this is exactly the service it was before; if the upstream is
+unreachable its voices drop out of `/voices` (cached for
+`VOICE_UPSTREAM_CACHE_TTL`, 30 s) and local ones keep working. `GET /health`
+reports what it sees:
+
+```json
+"upstream": {"enabled": true, "url": "http://127.0.0.1:8088", "ok": true,
+             "voices": ["carla", "es_f_19", "romina"], "languages": ["en", "es"],
+             "error": null}
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VOICE_UPSTREAM_URL` | *(empty)* | Base URL of the latina_voice_tts instance. Empty = feature off. |
+| `VOICE_UPSTREAM_KEY` | *(empty)* | Sent as `Authorization: Bearer …` if the upstream sets `LATINA_API_KEY`. |
+| `VOICE_UPSTREAM_CACHE_TTL` | `30` | Seconds the upstream catalog is cached. |
+| `VOICE_UPSTREAM_PROBE_TIMEOUT` | `8` | Timeout for `/voices` and `/health`-ish calls. |
+| `VOICE_UPSTREAM_TIMEOUT` | `300` | Timeout for a synth or transcribe call. |
+
+Standing both up on a fresh box: **[DEPLOY.md](DEPLOY.md)**.
+
+---
+
 ## HTTP API
 
 The contract MiniClosedAI's `voice.py` client expects:
@@ -240,6 +302,7 @@ curl -sk https://<host>:8090/speak -H 'Content-Type: application/json' \
 
 | Layer | Library | Model | Notes |
 |---|---|---|---|
+| Spanish TTS/ASR (optional) | `requests` → `upstream.py` | a [latina_voice_tts](https://github.com/edantonio505/latinavoicepod) instance (VoxCPM2 + Whisper large-v3) | set `VOICE_UPSTREAM_URL`; its voices join `/voices` and work in call mode |
 | ASR | `transformers` + `torch` | `openai/whisper-medium.en` (default) | swap via `VOICE_ASR_MODEL`; English-only `.en` variants are ~3× faster than multilingual for the same size |
 | TTS | `chatterbox-tts==0.1.6` (`tts_turbo` variant, `--no-deps`) | `ChatterboxTurboTTS.from_pretrained()` | token-streaming, fp16 transformer, **4** CFM diffusion steps (250× fewer than the default 1000), pattern lifted from `BCP_stuff/tts_server.py` |
 | VAD + turn-taking | `fastrtc[vad]` | Silero VAD | `min_silence_duration_ms=300` (was 2000 default), `can_interrupt=False` to prevent speaker→mic echo from cancelling the bot mid-reply |
@@ -459,6 +522,10 @@ VOICE_ASR_MODEL=medium.en ./start.sh -d
 # Multilingual (Spanish, French, etc.)
 VOICE_ASR_MODEL=large-v3 ./start.sh -d
 ```
+
+With `VOICE_UPSTREAM_URL` set you can keep a small English model here and let
+the upstream's `large-v3` handle Spanish — see
+[Spanish voices](#spanish-voices--pairing-with-latina_voice_tts).
 
 ### Call latency — first audio out
 

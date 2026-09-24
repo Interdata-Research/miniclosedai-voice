@@ -45,8 +45,9 @@ from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+import upstream
 from asr import ASR
-from tts import TTS, VOICE_CATALOG, scan_voice_catalog
+from tts import TTS, VOICE_CATALOG, _VOICE_EXTS, scan_voice_catalog
 from call import BotCallHandler, get_relay_queue
 
 # ---------------------------------------------------------------------------
@@ -136,6 +137,9 @@ def health():
         "tts_model": "chatterbox-turbo",
         "device": DEVICE,
         "voices_loaded": _tts is not None,
+        # The optional second voice service that supplies Spanish (upstream.py).
+        # {"enabled": false} when VOICE_UPSTREAM_URL is unset.
+        "upstream": upstream.status(),
         # Advertises relay-mode call support (MiniClosedAI pushes LLM text to
         # /call/turn/{id} instead of us dialing its /chat/stream). MiniClosedAI
         # gates its configure payload on this so old voice servers keep the
@@ -207,7 +211,10 @@ def voices(_=Depends(_require_auth)):
     cloned via the Voice Studio GUI (`POST /voices`) show up immediately —
     no service restart needed.
     """
-    return scan_voice_catalog(TTS_VOICES_DIR)
+    # Local clips plus whatever the upstream serves (Spanish, normally), so
+    # MiniClosedAI sees one backend with both languages. Local wins an id clash,
+    # and an unreachable upstream just drops out of the list.
+    return upstream.merge_catalog(scan_voice_catalog(TTS_VOICES_DIR))
 
 
 # ---------------------------------------------------------------------------
@@ -415,14 +422,40 @@ async def transcribe(
     return await asyncio.to_thread(asr.transcribe, data, language)
 
 
+def _has_local_voice(voice_id: str | None) -> bool:
+    """Is there a reference clip for this voice in VOICE_VOICES_DIR? Answered
+    from the filesystem, WITHOUT loading the TTS model — that is the point."""
+    if not voice_id:
+        return True                      # no voice named → local default
+    return any((TTS_VOICES_DIR / f"{voice_id}.{ext}").exists() for ext in _VOICE_EXTS)
+
+
+async def _synth_source(req: "SpeakRequest"):
+    """Return a zero-arg callable yielding `(pcm16, sample_rate)` for this
+    request, from whichever engine owns the voice.
+
+    Upstream voices are resolved BEFORE `_get_tts()`: loading Chatterbox just to
+    proxy a voice costs a ~1 GB first-use download and GBs of RAM/VRAM forever,
+    and on a Spanish-only front end it would never be used at all.
+    `tts.synthesize_stream()` routes upstream as well (that is what gives call
+    mode Spanish), so this is a short-circuit, not a second code path.
+    """
+    if not _has_local_voice(req.voice) and upstream.owns(req.voice):
+        return lambda: upstream.synthesize_stream(
+            req.text, req.voice, req.language, req.speed)
+    tts = await _get_tts()
+    return lambda: tts.synthesize_stream(
+        req.text, req.voice, req.language, req.speed)
+
+
 @app.post("/speak")
 async def speak(req: SpeakRequest, _=Depends(_require_auth)):
     """One-shot synth — returns a single audio/wav body. Use /speak/stream for
     chunked playback over SSE."""
-    tts = await _get_tts()
+    source = await _synth_source(req)
     chunks: list[bytes] = []
     sample_rate: int | None = None
-    for chunk, sr in tts.synthesize_stream(req.text, req.voice, req.language, req.speed):
+    for chunk, sr in source():
         chunks.append(chunk)
         sample_rate = sr
     pcm = b"".join(chunks)
@@ -488,6 +521,10 @@ async def _prewarm_voice(voice: str) -> None:
     just means the first turn warms lazily as before.
     """
     try:
+        # Upstream voices have nothing to warm here — the upstream holds the
+        # reference clip and does its own caching.
+        if upstream.owns(voice):
+            return
         tts = await _get_tts()
         wav = tts._wav_for(voice) or tts._wav_for("default")
         if wav is None:
@@ -781,7 +818,7 @@ async def speak_stream(req: SpeakRequest, _=Depends(_require_auth)):
     back to the async caller via a thread-safe queue, so the SSE socket
     flushes every chunk the moment it's ready.
     """
-    tts = await _get_tts()
+    source = await _synth_source(req)
 
     async def gen():
         chunk_q: asyncio.Queue = asyncio.Queue()
@@ -790,9 +827,7 @@ async def speak_stream(req: SpeakRequest, _=Depends(_require_auth)):
 
         def _run():
             try:
-                for chunk, sr in tts.synthesize_stream(
-                    req.text, req.voice, req.language, req.speed,
-                ):
+                for chunk, sr in source():
                     asyncio.run_coroutine_threadsafe(
                         chunk_q.put((chunk, sr)), loop,
                     )

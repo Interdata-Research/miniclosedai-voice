@@ -42,6 +42,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+import upstream
+
 
 # Static fallback catalog — used only when the voices/ directory is missing
 # or empty. The real `/voices` response is built by `scan_voice_catalog()`,
@@ -256,6 +258,15 @@ class TTS:
         """
         text = (text or "").strip()
         if not text:
+            return
+
+        # A voice we don't have on disk, but the upstream service does (see
+        # upstream.py): stream it from there and yield its chunks as if we had
+        # made them. This is what gives Spanish to /speak, /speak/stream AND
+        # call mode at once — they all come through here. Checked AFTER the
+        # local directory, so a shared id like `default` stays local.
+        if self._wav_for(voice_id) is None and upstream.owns(voice_id):
+            yield from upstream.synthesize_stream(text, voice_id, language, speed)
             return
 
         # Switch voice reference if needed.

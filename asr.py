@@ -44,6 +44,8 @@ import numpy as np
 import torch
 from transformers import pipeline as hf_pipeline
 
+import upstream
+
 
 # ---------------------------------------------------------------------------
 # Whisper hallucinations that show up on near-silence / low-SNR audio. Same
@@ -158,9 +160,28 @@ class ASR:
 
     # ---- public API ----------------------------------------------------
 
+    def _route_upstream(self, language: str | None) -> bool:
+        """Send this clip to the upstream instead of our own Whisper?
+
+        Only when it can do better: the caller asked for a language, ours is an
+        English-only checkpoint (``medium.en`` & co. would transliterate Spanish
+        into English-sounding nonsense), and an upstream is configured. With a
+        multilingual local model (``VOICE_ASR_MODEL=large-v3``) nothing is
+        routed — one less network hop.
+        """
+        lang = (language or "").strip().lower().split("-")[0]
+        return bool(lang and lang != "en" and self._is_english_only
+                    and upstream.enabled())
+
     def transcribe(self, audio: bytes, language: str | None = None) -> dict[str, Any]:
         """Decode (via ffmpeg) + transcribe. Returns the legacy shape:
         ``{"text", "language", "segments"}``."""
+        if self._route_upstream(language):
+            try:
+                return upstream.transcribe(audio, language)
+            except Exception as e:      # upstream down → our Whisper, poorly, but alive
+                print(f"[asr] upstream /transcribe failed ({e}); using {self.model_id}",
+                      flush=True)
         pcm = _ffmpeg_decode_to_pcm(audio, target_sr=16000)
         return self._run(pcm, language=language, want_segments=True)
 
@@ -176,6 +197,16 @@ class ASR:
         # Guard against tiny garbage clips — Whisper hallucinates on <300ms.
         if len(audio) < 16000 * 0.3:
             return ""
+        # Call mode, non-English: hand the same 16 kHz mono audio to the
+        # upstream as a WAV. `audio` is float32 here, so re-encode to int16.
+        if self._route_upstream(language):
+            try:
+                pcm16 = (np.clip(audio, -1.0, 1.0) * 32767).astype("<i2").tobytes()
+                return (upstream.transcribe(upstream.wav_bytes(pcm16, 16000),
+                                            language).get("text") or "").strip()
+            except Exception as e:
+                print(f"[asr] upstream /transcribe failed ({e}); using {self.model_id}",
+                      flush=True)
         out = self._run(audio, language=language, want_segments=False)
         return out["text"]
 
